@@ -27,7 +27,7 @@ type Mutex struct {
 	value        string
 	until        time.Time
 
-	pools []redis.Pool
+	pools []*redis.Pool
 }
 
 // Lock locks m. In case it returns an error on failure, you may retry to acquire the lock by calling this method again.
@@ -44,7 +44,7 @@ func (m *Mutex) Lock() error {
 
 		start := time.Now()
 
-		n := m.actOnPoolsAsync(func(pool redis.Pool) bool {
+		n := m.actOnPoolsAsync(func(pool *redis.Pool) bool {
 			return m.acquire(pool, value)
 		})
 
@@ -54,7 +54,7 @@ func (m *Mutex) Lock() error {
 			m.until = until
 			return nil
 		}
-		m.actOnPoolsAsync(func(pool redis.Pool) bool {
+		m.actOnPoolsAsync(func(pool *redis.Pool) bool {
 			return m.release(pool, value)
 		})
 	}
@@ -64,7 +64,7 @@ func (m *Mutex) Lock() error {
 
 // Unlock unlocks m and returns the status of unlock.
 func (m *Mutex) Unlock() bool {
-	n := m.actOnPoolsAsync(func(pool redis.Pool) bool {
+	n := m.actOnPoolsAsync(func(pool *redis.Pool) bool {
 		return m.release(pool, m.value)
 	})
 	return n >= m.quorum
@@ -72,7 +72,7 @@ func (m *Mutex) Unlock() bool {
 
 // Extend resets the mutex's expiry and returns the status of expiry extension.
 func (m *Mutex) Extend() bool {
-	n := m.actOnPoolsAsync(func(pool redis.Pool) bool {
+	n := m.actOnPoolsAsync(func(pool *redis.Pool) bool {
 		return m.touch(pool, m.value, int(m.expiry/time.Millisecond))
 	})
 	return n >= m.quorum
@@ -87,7 +87,7 @@ func genValue() (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
-func (m *Mutex) acquire(pool redis.Pool, value string) bool {
+func (m *Mutex) acquire(pool *redis.Pool, value string) bool {
 	conn := pool.Get()
 	defer conn.Close()
 	reply, err := redis.String(conn.Do("SET", m.name, value, "NX", "PX", int(m.expiry/time.Millisecond)))
@@ -102,7 +102,7 @@ var deleteScript = redis.NewScript(1, `
 	end
 `)
 
-func (m *Mutex) release(pool redis.Pool, value string) bool {
+func (m *Mutex) release(pool *redis.Pool, value string) bool {
 	conn := pool.Get()
 	defer conn.Close()
 	status, err := deleteScript.Do(conn, m.name, value)
@@ -117,17 +117,17 @@ var touchScript = redis.NewScript(1, `
 	end
 `)
 
-func (m *Mutex) touch(pool redis.Pool, value string, expiry int) bool {
+func (m *Mutex) touch(pool *redis.Pool, value string, expiry int) bool {
 	conn := pool.Get()
 	defer conn.Close()
 	status, err := touchScript.Do(conn, m.name, value, expiry)
 	return err == nil && status != 0
 }
 
-func (m *Mutex) actOnPoolsAsync(actFn func(redis.Pool) bool) int {
+func (m *Mutex) actOnPoolsAsync(actFn func(*redis.Pool) bool) int {
 	ch := make(chan bool)
 	for _, pool := range m.pools {
-		go func(pool redis.Pool) {
+		go func(pool *redis.Pool) {
 			ch <- actFn(pool)
 		}(pool)
 	}
