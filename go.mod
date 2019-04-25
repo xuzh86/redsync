@@ -1,4 +1,4 @@
-module github.com/go-redsync/redsync
+module github.com/xuzh86/redsync
 
 require (
 	github.com/gomodule/redigo v2.0.0+incompatible
